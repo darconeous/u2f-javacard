@@ -56,6 +56,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final byte FIDO_INS_SIGN = (byte)0x02;
     private static final byte FIDO_INS_VERSION = (byte)0x03;
     private static final byte ISO_INS_GET_DATA = (byte)0xC0;
+    private static final byte FIDO2_INS_NFCCTAP_MSG = (byte)0x10;
 
     private static final byte PROPRIETARY_CLA = (byte)0xF0;
     private static final byte FIDO_ADM_SET_ATTESTATION_CERT = (byte)0x01;
@@ -101,6 +102,8 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final short FIDO_SW_INVALID_KEY_HANDLE = ISO7816.SW_WRONG_DATA;
 
     private static final byte INSTALL_FLAG_DISABLE_USER_PRESENCE = (byte)0x01;
+
+    private static final byte CTAP1_ERR_INVALID_COMMAND = (byte)0x01;
 
     // Parameters
     // 1 byte : flags
@@ -387,42 +390,58 @@ public class U2FApplet extends Applet implements ExtendedLength {
             }
             return;
         }
-        if (buffer[ISO7816.OFFSET_CLA] == PROPRIETARY_CLA) {
-            if (attestationCertificateSet) {
-                ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
-            }
-            switch(buffer[ISO7816.OFFSET_INS]) {
-            case FIDO_ADM_SET_ATTESTATION_CERT:
+
+        if (!attestationCertificateSet) {
+            if ((buffer[ISO7816.OFFSET_CLA] & (byte)0x80) == (byte)0x80
+                    && buffer[ISO7816.OFFSET_INS] == FIDO_ADM_SET_ATTESTATION_CERT
+            ) {
                 handleSetAttestationCert(apdu);
-                break;
-            default:
+            } else {
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
             }
+            return;
         }
-        else if (buffer[ISO7816.OFFSET_CLA] == FIDO_CLA) {
-            if (!attestationCertificateSet) {
-                ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
-            }
-            switch(buffer[ISO7816.OFFSET_INS]) {
-            case FIDO_INS_ENROLL:
-                handleEnroll(apdu);
-                break;
-            case FIDO_INS_SIGN:
-                handleSign(apdu);
-                break;
-            case FIDO_INS_VERSION:
-                handleVersion(apdu);
-                break;
-            case ISO_INS_GET_DATA:
-                handleGetData(apdu);
-                break;
-            default:
+
+        if ((buffer[ISO7816.OFFSET_CLA] & (byte)0x80) == (byte)0x80) {
+            if (buffer[ISO7816.OFFSET_INS] == FIDO2_INS_NFCCTAP_MSG) {
+                handleCtap2(apdu);
+            } else {
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
             }
+        } else {
+            switch (buffer[ISO7816.OFFSET_INS]) {
+                case FIDO_INS_ENROLL:
+                    handleEnroll(apdu);
+                    break;
+                case FIDO_INS_SIGN:
+                    handleSign(apdu);
+                    break;
+                case FIDO_INS_VERSION:
+                    handleVersion(apdu);
+                    break;
+                case ISO_INS_GET_DATA:
+                    handleGetData(apdu);
+                    break;
+                default:
+                    ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
+            }
         }
-        else {
-            ISOException.throwIt(ISO7816.SW_CLA_NOT_SUPPORTED);
-        }
+    }
+
+    private void
+    handleCtap2(APDU apdu)
+    {
+        // We don't actually support CTAP2, so we always
+        // return CTAP1_ERR_INVALID_COMMAND.
+        final byte[] buffer = apdu.getBuffer();
+        apdu.setIncomingAndReceive();
+        short dataOffset = apdu.getOffsetCdata();
+
+        short len = 0;
+
+        buffer[len++] = CTAP1_ERR_INVALID_COMMAND;
+
+        apdu.setOutgoingAndSend((short)0, len);
     }
 
     public static void install (byte bArray[], short bOffset, byte bLength) throws ISOException {
