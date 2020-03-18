@@ -291,7 +291,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
             scratch[SCRATCH_TRANSPORT_STATE] = TRANSPORT_EXTENDED;
             apdu.setOutgoing();
             apdu.setOutgoingLength((short)(outOffset - SCRATCH_PAD));
-            apdu.sendBytesLong(scratch, SCRATCH_PAD, outOffset);
+            apdu.sendBytesLong(scratch, SCRATCH_PAD, (short)(outOffset - SCRATCH_PAD));
         }
         else {
             // Otherwise send the first chunk
