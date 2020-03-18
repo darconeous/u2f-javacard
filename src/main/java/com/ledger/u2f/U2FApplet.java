@@ -19,32 +19,19 @@
 
 package com.ledger.u2f;
 
-import javacard.framework.APDU;
-import javacard.framework.Applet;
-import javacard.framework.ISO7816;
-import javacard.framework.ISOException;
-import javacard.framework.JCSystem;
-import javacard.framework.Util;
-
-import javacard.security.KeyBuilder;
+import javacard.framework.*;
+import javacard.security.*;
 import javacardx.apdu.ExtendedLength;
-import javacard.security.ECPrivateKey;
-import javacard.security.ECPublicKey;
-import javacard.security.Signature;
-import javacard.security.CryptoException;
 
 public class U2FApplet extends Applet implements ExtendedLength {
 
-    private byte flags;
-    private byte[] counter;
-    private byte[] scratchPersistent;
+    private Counter counter;
+    private Presence presence;
     private byte[] scratch;
     private byte[] attestationCertificate;
     private boolean attestationCertificateSet;
-    private ECPrivateKey attestationPrivateKey;
     private ECPrivateKey localPrivateKey;
     private boolean localPrivateTransient;
-    private boolean counterOverflowed;
     private Signature attestationSignature;
     private Signature localSignature;
     private FIDOAPI fidoImpl;
@@ -113,8 +100,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
         if (parametersLength != 35) {
             ISOException.throwIt(ISO7816.SW_WRONG_DATA);
         }
-        counter = new byte[4];
-        scratchPersistent = JCSystem.makeTransientByteArray((short)1, JCSystem.CLEAR_ON_RESET);
+        counter = new Counter();
         scratch = JCSystem.makeTransientByteArray((short)(SCRATCH_PAD + SCRATCH_PAD_SIZE), JCSystem.CLEAR_ON_DESELECT);
         try {
             // ok, let's save RAM
@@ -135,9 +121,16 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
         attestationSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
         localSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
-        flags = parameters[parametersOffset];
+        byte flags = parameters[parametersOffset];
+
+        if ((flags & INSTALL_FLAG_DISABLE_USER_PRESENCE) == 0) {
+            presence = new OneShotPresence();
+        } else {
+            presence = new NullPresence();
+        }
+
         attestationCertificate = new byte[Util.getShort(parameters, (short)(parametersOffset + 1))];
-        attestationPrivateKey = (ECPrivateKey)KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PRIVATE, KeyBuilder.LENGTH_EC_FP_256, false);
+        ECPrivateKey attestationPrivateKey = (ECPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PRIVATE, KeyBuilder.LENGTH_EC_FP_256, false);
         Secp256r1.setCommonCurveParameters(attestationPrivateKey);
         attestationPrivateKey.setS(parameters, (short)(parametersOffset + 3), (short)32);
         attestationSignature.init(attestationPrivateKey, Signature.MODE_SIGN);
@@ -164,21 +157,14 @@ public class U2FApplet extends Applet implements ExtendedLength {
         short dataOffset = apdu.getOffsetCdata();
         boolean extendedLength = (dataOffset != ISO7816.OFFSET_CDATA);
         short outOffset;
+
         if (len != 64) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
+
         // Deny if user presence cannot be validated
-        if ((flags & INSTALL_FLAG_DISABLE_USER_PRESENCE) == 0) {
-            if (scratchPersistent[0] != 0) {
-                ISOException.throwIt(FIDO_SW_TEST_OF_PRESENCE_REQUIRED);
-            }
-        }
-        // Check if the counter overflowed
-        if (counterOverflowed) {
-            ISOException.throwIt(ISO7816.SW_FILE_FULL);
-        }
-        // Set user presence
-        scratchPersistent[0] = (byte)1;
+        presence.verify_user_presence();
+
         // Generate the key pair
         if (localPrivateTransient) {
             Secp256r1.setCommonCurveParameters(localPrivateKey);
@@ -222,7 +208,6 @@ public class U2FApplet extends Applet implements ExtendedLength {
         short dataOffset = apdu.getOffsetCdata();
         byte p1 = buffer[ISO7816.OFFSET_P1];
         boolean sign = false;
-        boolean counterOverflow = true;
         short keyHandleLength;
         boolean extendedLength = (dataOffset != ISO7816.OFFSET_CDATA);
         short outOffset = SCRATCH_PAD;
@@ -238,10 +223,6 @@ public class U2FApplet extends Applet implements ExtendedLength {
         default:
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
-        // Check if the counter overflowed
-        if (counterOverflowed) {
-            ISOException.throwIt(ISO7816.SW_FILE_FULL);
-        }
         // Verify key handle
         if (localPrivateTransient) {
             Secp256r1.setCommonCurveParameters(localPrivateKey);
@@ -250,38 +231,23 @@ public class U2FApplet extends Applet implements ExtendedLength {
         if (!fidoImpl.unwrap(buffer, (short)(dataOffset + 65), keyHandleLength, buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), (sign ? localPrivateKey : null))) {
             ISOException.throwIt(FIDO_SW_INVALID_KEY_HANDLE);
         }
+
         // If not signing, return with the "correct" exception
         if (!sign) {
             ISOException.throwIt(FIDO_SW_TEST_OF_PRESENCE_REQUIRED);
         }
+
         // If signing, only proceed if user presence can be validated
-        if ((flags & INSTALL_FLAG_DISABLE_USER_PRESENCE) == 0) {
-            if (scratchPersistent[0] != 0) {
-                ISOException.throwIt(FIDO_SW_TEST_OF_PRESENCE_REQUIRED);
-            }
-        }
-        scratchPersistent[0] = (byte)1;
+        presence.verify_user_presence();
+
         // Increase the counter
-        boolean carry = false;
-        JCSystem.beginTransaction();
-        for (byte i=0; i<4; i++) {
-            short addValue = (i == 0 ? (short)1 : (short)0);
-            short val = (short)((short)(counter[(short)(4 - 1 - i)] & 0xff) + addValue);
-            if (carry) {
-                val++;
-            }
-            carry = (val > 255);
-            counter[(short)(4 - 1 - i)] = (byte)val;
-        }
-        JCSystem.commitTransaction();
-        if (carry) {
-            // Game over
-            counterOverflowed = true;
-            ISOException.throwIt(ISO7816.SW_FILE_FULL);
-        }
+        counter.inc();
+
         // Prepare reply
         scratch[outOffset++] = FLAG_USER_PRESENCE_VERIFIED;
-        outOffset = Util.arrayCopyNonAtomic(counter, (short)0, scratch, outOffset, (short)4);
+
+        outOffset = counter.writeValue(scratch, outOffset);
+
         localSignature.init(localPrivateKey, Signature.MODE_SIGN);
         localSignature.update(buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), (short)32);
         localSignature.update(scratch, SCRATCH_PAD, (short)5);
