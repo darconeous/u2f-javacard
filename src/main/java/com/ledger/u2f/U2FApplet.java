@@ -71,8 +71,9 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final byte TRANSPORT_NOT_EXTENDED_CERT = (byte)3;
     private static final byte TRANSPORT_NOT_EXTENDED_SIGNATURE = (byte)4;
 
-    private static final byte P1_SIGN_OPERATION = (byte)0x03;
+    private static final byte P1_ENFORCE_PRESENCE_AND_SIGN = (byte)0x03;
     private static final byte P1_SIGN_CHECK_ONLY = (byte)0x07;
+    private static final byte P1_IGNORE_PRESENCE_AND_SIGN = (byte)0x08;
 
     private static final byte ENROLL_LEGACY_VERSION = (byte)0x05;
     private static final byte RFU_ENROLL_SIGNED_VERSION[] = { (byte)0x00 };
@@ -82,8 +83,6 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final short ENROLL_KEY_HANDLE_OFFSET = (short)67;
     private static final short APDU_CHALLENGE_OFFSET = (short)0;
     private static final short APDU_APPLICATION_PARAMETER_OFFSET = (short)32;
-
-    private static final byte FLAG_USER_PRESENCE_VERIFIED = (byte)0x01;
 
     private static final short FIDO_SW_TEST_OF_PRESENCE_REQUIRED = ISO7816.SW_CONDITIONS_NOT_SATISFIED;
     private static final short FIDO_SW_INVALID_KEY_HANDLE = ISO7816.SW_WRONG_DATA;
@@ -163,7 +162,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
 
         // Deny if user presence cannot be validated
-        presence.verify_user_presence();
+        presence.enforce_user_presence();
 
         // Generate the key pair
         if (localPrivateTransient) {
@@ -208,6 +207,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
         short dataOffset = apdu.getOffsetCdata();
         byte p1 = buffer[ISO7816.OFFSET_P1];
         boolean sign = false;
+        boolean enforce_presence = false;
         short keyHandleLength;
         boolean extendedLength = (dataOffset != ISO7816.OFFSET_CDATA);
         short outOffset = SCRATCH_PAD;
@@ -215,7 +215,11 @@ public class U2FApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
         switch(p1) {
-        case P1_SIGN_OPERATION:
+        case P1_ENFORCE_PRESENCE_AND_SIGN:
+            sign = true;
+            enforce_presence = true;
+            break;
+        case P1_IGNORE_PRESENCE_AND_SIGN:
             sign = true;
             break;
         case P1_SIGN_CHECK_ONLY:
@@ -237,14 +241,14 @@ public class U2FApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(FIDO_SW_TEST_OF_PRESENCE_REQUIRED);
         }
 
-        // If signing, only proceed if user presence can be validated
-        presence.verify_user_presence();
+        if (enforce_presence) {
+            scratch[outOffset++] = presence.enforce_user_presence();
+        } else {
+            scratch[outOffset++] = presence.check_user_presence();
+        }
 
-        // Increase the counter
+        // Increase the signature counter
         counter.inc();
-
-        // Prepare reply
-        scratch[outOffset++] = FLAG_USER_PRESENCE_VERIFIED;
 
         outOffset = counter.writeValue(scratch, outOffset);
 

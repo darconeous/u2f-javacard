@@ -6,6 +6,12 @@ package com.ledger.u2f;
  */
 public class NullPresence implements Presence {
     @Override
-    public void verify_user_presence() {
+    public byte enforce_user_presence() {
+        return FLAG_USER_PRESENT;
+    }
+
+    @Override
+    public byte check_user_presence() {
+        return 0;
     }
 }

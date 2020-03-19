@@ -29,10 +29,22 @@ public class OneShotPresence implements Presence {
     }
 
     @Override
-    public void verify_user_presence() {
-        if (did_verify_flag[0] != 0) {
+    public byte enforce_user_presence() {
+        byte presence = check_user_presence();
+
+        if ((presence & FLAG_USER_PRESENT) != FLAG_USER_PRESENT) {
             ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
         }
+
+        return presence;
+    }
+
+    @Override
+    public byte check_user_presence() {
+        if (did_verify_flag[0] != 0) {
+            return 0;
+        }
         did_verify_flag[0] = 1;
+        return FLAG_USER_PRESENT;
     }
 }
