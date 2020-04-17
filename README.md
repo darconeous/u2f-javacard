@@ -29,7 +29,7 @@ Before using the applet, the attestation certificate shall be loaded using a pro
 
 | CLA | INS | P1            | P2           | Data                    |
 | --- | --- | ------------- | ------------ | ----------------------- |
-| F0  | 01  | offset (high) | offset (low) | Certificate data chunk  | 
+| 80  | 01  | offset (high) | offset (low) | Certificate data chunk  | 
 
 # Testing on Android 
 
