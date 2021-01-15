@@ -539,6 +539,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
         buffer[len++] = CTAP1_ERR_INVALID_COMMAND;
 
         apdu.setOutgoingAndSend((short)0, len);
+	ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);    
     }
 
     public static void install (byte bArray[], short bOffset, byte bLength) throws ISOException {
